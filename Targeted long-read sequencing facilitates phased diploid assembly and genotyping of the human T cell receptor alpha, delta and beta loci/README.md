@@ -9,12 +9,12 @@
 1. Testing the accuracy of alleles by checking the mendelian inheritance of the alleles in the proband using the alleles in the parents
 ```
 python scripts/test_allele_acc/trio_validate_alleles.py \
-  NA18506_assembly_alleles.bed \
-  NA18507_assembly_alleles.bed \
-  NA18508_assembly_alleles.bed
+  scripts/test_allele_acc/data/NA18506_assembly_alleles.bed \
+  scripts/test_allele_acc/data/NA18507_assembly_alleles.bed \
+  scripts/test_allele_acc/data/NA18508_assembly_alleles.bed
   
 python scripts/test_allele_acc/trio_validate_alleles.py \
-  HG02059_assembly_alleles.bed \
-  HG02060_assembly_alleles.bed \
-  HG02061_assembly_alleles.bed
+  scripts/test_allele_acc/data/HG02059_assembly_alleles.bed \
+  scripts/test_allele_acc/data/HG02060_assembly_alleles.bed \
+  scripts/test_allele_acc/data/HG02061_assembly_alleles.bed
 ```
