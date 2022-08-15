@@ -1,0 +1,290 @@
+VARIANTS =["snps","snps_common_biallelic","large_sv_anova","large_sv_linear",
+           "indel_tr","indel_not_tr","sv_tr","sv_not_tr","complex_sv_hap"]
+
+ISOTYPES = ["M","G"]
+
+rule all:
+    input:
+        "results/sv_ld_fofn.txt",
+        "results/guqtl_lead_variant_sv_ld.txt",
+        "results/supplementary.txt",
+        "figures/ighv3_66.pdf",
+        "results/M_guqtl_snps_associated_to_multiple_genes.txt",
+        "results/edges.txt",
+        "results/usage_for_lead_guqtl_genotypes.txt",
+        "results/gene_count_per_variants.txt",
+        "figures/snps_genes_multi_box_plot.pdf",
+        "results/igh_guqtls.vcf",
+        "results/igh_guqtls_to_hg38_lifted.vcf",
+        "results/igh_to_hg38_lifted.vcf",
+        "results/enrichment.txt",
+        "figures/ccre_enrich.pdf",
+        "results/allele_count.txt",
+        "results/allele_count_pvals.txt",
+        "figures/allele_diff.pdf",
+        "results/gwas_guqtl_overlap.txt",
+        "results/gwas_guqtl_overlap.bed"
+
+rule create_variant_matrix_fofn:
+    input:
+        expand("data/variants/{variant}_matrix.txt",variant=VARIANTS)
+    output:
+        "results/variant_matrix_fofn.txt"
+    run:
+        with open(output[0],'w') as outfh:
+            for variant in VARIANTS:
+                outfh.write("%s\tdata/variants/%s_matrix.txt\n" % (variant,variant))
+
+rule calculate_variant_large_sv_ld:
+    input:
+        "results/variant_matrix_fofn.txt",
+        expand("data/variants/{variant}_matrix.txt",variant=[i for i in VARIANTS if "large" in i]),
+        expand("data/variants/{variant}_matrix.txt",variant=[i for i in VARIANTS if "large" not in i])
+    output:
+        expand("results/sv_ld/{variant}_anova.txt",variant=[i for i in VARIANTS if "large" not in i]),
+        expand("results/sv_ld/{variant}_linear.txt",variant=[i for i in VARIANTS if "large" not in i])
+    run:
+        for variant in VARIANTS:
+            if "large" in variant:
+                continue
+            variant_matrix = "data/variants/%s_matrix.txt" % variant
+            for test_ in ["anova","linear"]:
+                large_sv_matrix = "data/variants/large_sv_%s_matrix.txt" % test_
+                out_ld = "results/sv_ld/%s_%s.txt" % (variant,test_)
+                shell("python scripts/calculate_snv_sv_ld.py %s %s > %s" % (variant_matrix,large_sv_matrix,out_ld))
+
+rule create_sv_ld_fofn:
+    input:
+        expand("results/sv_ld/{variant}_anova.txt",variant=[i for i in VARIANTS if "large" not in i]),
+        expand("results/sv_ld/{variant}_linear.txt",variant=[i for i in VARIANTS if "large" not in i])
+    output:
+        "results/sv_ld_fofn.txt"
+    run:
+        with open(output[0],'w') as outfh:
+            for variant in VARIANTS:
+                if "large" in variant:
+                    continue
+                for test_ in ["anova","linear"]:
+                    out = [test_,"results/sv_ld/%s_%s.txt" % (variant,test_)]
+                    outfh.write("%s\n" % "\t".join(map(str,out)))
+
+rule get_most_signficant_variants:
+    input:
+        expand("data/guqtl/{isotype}_top_gene_hit.txt",isotype=ISOTYPES)
+    output:
+        "results/guqtl_lead_variants.txt"
+    shell:
+        "cat {input} | cut -f1 | sort | uniq > {output}"
+
+rule parse_sv_lds:
+    input:
+        "results/sv_ld_fofn.txt",
+        "results/guqtl_lead_variants.txt"
+    output:
+        "results/guqtl_lead_variant_sv_ld.txt"
+    shell:
+        "python scripts/parse_sv_ld.py {input[0]} {input[1]} > {output}"
+
+rule create_supplementary_table:
+    input:
+        "data/usage/M_matrix.txt",
+        "data/guqtl/M.txt",
+        "data/guqtl/G.txt",
+        "data/auxiliary/genes_in_svs.txt",
+        "results/variant_matrix_fofn.txt",        
+        "results/guqtl_lead_variant_sv_ld.txt",
+        "data/guqtl/M_biallelic.txt",
+        "data/guqtl/G_biallelic.txt",
+        "data/usage/M_usage_genotype.txt",
+        "data/usage/G_usage_genotype.txt",
+        "data/variants/snps.recode.vcf",
+        "data/auxiliary/rs_id_mappings.txt"
+    output:
+        "results/supplementary.txt"
+    shell:
+        "python scripts/create_supplementary_table.py {input} > {output}"
+
+rule main_figure_2:
+    input:
+        "results/supplementary.txt",
+        "data/guqtl/M.txt"
+    output:
+        "figures/ighv3_66.pdf"
+    shell:
+        "Rscript scripts/main_figure_2.R {input} `pwd`"
+
+rule get_snps_associated_to_multiple_genes:
+    input:
+        "data/guqtl/M.txt"
+    output:
+        "results/M_guqtl_snps_associated_to_multiple_genes.txt"
+    run:
+        from collections import Counter
+        guqtl_variants = []
+        with open(input[0],'r') as infh:
+            for line in infh:
+                line = line.rstrip().split('\t')
+                if line[20] == "True":
+                    guqtl_variants.append(line[0])
+        cnt = Counter(guqtl_variants)
+        multi_hits = [k for k, v in cnt.items() if v > 1]
+        with open(output[0],'w') as outfh:
+            with open(input[0],'r') as infh:
+                for line in infh:
+                    line = line.rstrip().split('\t')
+                    if line[20] != "True":
+                        continue
+                    if line[0] in multi_hits:
+                        outfh.write("%s\n" % "\t".join(line))
+
+rule create_networks:
+    input:
+        "results/M_guqtl_snps_associated_to_multiple_genes.txt"
+    output:
+        "results/edges.txt"
+    shell:
+        "python scripts/graph_structure.py {input} `pwd` "
+
+rule get_usage_for_lead_guqtl_genotypes:
+    input:
+        "data/usage/M_usage_genotype.txt",
+        "data/guqtl/M_top_gene_hit.txt"
+    output:
+        "results/usage_for_lead_guqtl_genotypes.txt"
+    shell:
+        "python scripts/extract_genotype_usage_values.py {input} > {output}"
+
+rule get_num_snps_per_gene:
+    input:
+        "data/guqtl/M.txt"
+    output:
+        "results/gene_count_per_variants.txt"
+    shell:
+        "python scripts/get_snv_gene_count.py {input} {output}"
+
+rule main_figure_3:
+    input:
+        "results/usage_for_lead_guqtl_genotypes.txt",
+        "data/conditional_guqtl/IGHV1-2_132_0.txt",
+        "data/conditional_guqtl/IGHV1-2_132_0_genotype_usage.txt",
+        "data/conditional_guqtl/IGHV3-66_10_0.txt",
+        "results/gene_count_per_variants.txt",
+        "data/guqtl/M.txt",
+        "data/usage/M_usage_genotype.txt"
+    output:
+        "figures/snps_genes_multi_box_plot.pdf"
+    shell:
+        "Rscript scripts/main_figure_3.R `pwd` {input}"
+
+rule get_pos_with_guqtls:
+    input:
+        "data/guqtl/M.txt",
+        "data/variants/snps.recode.vcf"
+    output:
+        "results/M_guqtl_pos.txt"
+    shell:
+        "cat {input} | awk '$21 == \"True\"' | cut -f1 | sort | uniq | sort -k1,1n | awk '{{ print \"igh\t\"$1 }}' > {output}"
+
+rule get_vcf_with_guqtls:
+    input:
+        "results/M_guqtl_pos.txt",
+        "data/variants/snps.recode.vcf"
+    output:
+        "results/igh_guqtls.vcf"
+    shell:
+        "vcftools --positions {input[0]} --vcf {input[1]} --recode --stdout > {output}"
+
+rule liftover_guqtl_vcf:
+    input:
+        "results/igh_guqtls.vcf",
+        "data/auxiliary/igh_to_hg38.txt"
+    output:
+        "results/igh_guqtls_to_hg38_lifted.vcf"
+    shell:
+        "python scripts/lift_over_snps.py {input} results/igh_guqtls_to_hg38"
+
+rule liftover_vcf:
+    input:
+        "data/variants/common_snps.vcf",
+        "data/auxiliary/igh_to_hg38.txt"
+    output:
+        "results/igh_to_hg38_lifted.vcf"
+    shell:
+        "python scripts/lift_over_snps.py {input} results/igh_to_hg38"
+
+rule test_for_snps_enrichment:
+    input:
+        "results/igh_guqtls_to_hg38_lifted.vcf",
+        "results/igh_to_hg38_lifted.vcf",
+        "data/auxiliary/ccre.bed",
+        "data/auxiliary/tfbs.bed"
+    output:
+        "results/enrichment.txt"
+    shell:
+        "python scripts/calc_enrinchment.py {input} >  {output}"
+
+rule main_figure_4:
+    input:
+        "results/enrichment.txt"
+    output:
+        "figures/ccre_enrich.pdf"
+    shell:
+        "Rscript scripts/main_figure_4.R `pwd` {input}"    
+
+rule get_allele_count:
+    input:
+        "data/guqtl/M.txt",
+        "results/variant_matrix_fofn.txt",
+        "data/alleles/alleles.txt",
+        "data/alleles/novel_alleles_ms.txt"
+    output:
+        "results/allele_count.txt"
+    shell:
+        "python scripts/get_allele_distribution.py {input} > {output}"
+
+rule test_sign_diff_alleles:
+    input:
+        "results/allele_count.txt"
+    output:
+        "results/allele_count_pvals.txt"
+    shell:
+        "Rscript scripts/get_pval.R {input} {output}"
+
+rule main_figure_5:
+    input:
+        "results/allele_count_pvals.txt"
+    output:
+        "figures/allele_diff.pdf"
+    shell:
+        "Rscript scripts/main_figure_5.R `pwd` {input}"    
+
+rule get_gwas_guqtl_overlap:
+    input:
+        "data/auxiliary/gwas_igh_parsed.txt",
+        "data/guqtl/M.txt"
+    output:
+        "results/gwas_guqtl_overlap.txt"
+    run:
+        guqtl_snps = {}
+        with open(input[1],'r') as fh:
+            for line in fh:
+                line = line.rstrip().split('\t')
+                if line[20] != "True":
+                    continue
+                guqtl_snps[line[0]] = line
+        with open(output[0],'w') as outfh:
+            with open(input[0],'r') as infh:
+                for line in infh:
+                    line = line.rstrip().split('\t')
+                    if line[1] not in guqtl_snps:
+                        continue
+                    out = line + guqtl_snps[line[1]]
+                    outfh.write("%s\n" % "\t".join(out))
+                    
+rule get_gwas_guqtl_overlap_bed:
+    input:
+        "results/gwas_guqtl_overlap.txt"
+    output:
+        "results/gwas_guqtl_overlap.bed"
+    shell:
+        "cat {input} | cut -f8,9 | awk '{{ print \"chr14\t\"$2\"\t\"$2 + 1\"\t\"$1}}' | sort -k2,2n > {output}"
