@@ -10,5 +10,6 @@ See scripts folder.
 Figures can be generated using the Snakefile.
 
 ```
-Snakemake
+# run
+snakemake
 ```
